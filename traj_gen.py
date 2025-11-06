@@ -7,6 +7,7 @@ import astropy.units as u
 from datetime import datetime, timedelta
 from scipy.spatial.transform import Rotation as R
 import numpy as np
+import poliastro
 
 
 R_EARTH = 6371.0  # km
@@ -111,6 +112,9 @@ class TrajectoryGenerator:
     def add_burn(self, time, delta_v):
         self.maneuvers.append((time, delta_v))
 
+    def sat_perturbations(self, state):
+        pass
+    
     def sat_diff_eq(self, state):
         r = state[0:3]
         v = state[3:6]
