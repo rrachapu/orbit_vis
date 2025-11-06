@@ -89,38 +89,20 @@ class TrajectoryGenerator:
 
         return {"times": times, "unit_vectors": unit_vectors}
     
+    def compute_initial_earth_rotation_angle(self):
+        """
+        Compute the initial Earth Rotation Angle (ERA) at start_time.
+        Returns ERA in radians.
+        """
 
-    # def sun_direction_quaternions_eci(self, duration, dt):
-    #     """
-    #     Compute quaternions from ECI to Sun-pointing frame using astropy.
-    #     Returns dict with 'times' and 'quaternions'.
-    #     """
-    #     num_steps = int(duration // dt) + 1
-    #     times = [self.start_time + timedelta(seconds=i * dt) for i in range(num_steps)]
-    #     quaternions = []
+        t_now = self.start_time
+        # Convert to astropy Time (UT1 scale)
+        t_ast = Time(t_now, scale="utc")
+        jd_ut1 = t_ast.ut1.jd  # UT1 Julian Date
+        # IAU 2000 formula for ERA (Earth Rotation Angle)
+        era = (2.0 * np.pi * (0.7790572732640 + 1.00273781191135448 * (jd_ut1 - 2451545.0))) % (2.0 * np.pi)
 
-    #     for t_now in times:
-    #         current_time = Time(t_now, scale="utc")
-    #         sun_pos = get_sun(current_time).transform_to(GCRS(obstime=current_time))
-    #         r_sun = sun_pos.cartesian.xyz.to(u.km).value
-    #         sun_vec = r_sun / np.linalg.norm(r_sun)
-
-    #         # Define frame: Z → Sun
-    #         z_axis = sun_vec
-    #         x_axis = np.array([1.0, 0.0, 0.0])
-    #         if np.allclose(z_axis, x_axis):
-    #             x_axis = np.array([0.0, 1.0, 0.0])
-    #         y_axis = np.cross(z_axis, x_axis)
-    #         y_axis /= np.linalg.norm(y_axis)
-    #         x_axis = np.cross(y_axis, z_axis)
-
-    #         R_mat = np.column_stack((x_axis, y_axis, z_axis))
-    #         q = R.from_matrix(R_mat).as_quat()  # [x, y, z, w]
-    #         q_threejs = convert_quaternion_eci_to_threejs(q)
-    #         quaternions.append(q_threejs.tolist())
-    #         print(q_threejs)
-
-    #     return {"times": times, "quaternions": quaternions}
+        return {"earth_rotation_angle": era}
 
     def create_json(self, dict_data, filename):
         with open(f"{filename}.json", "w") as f:
@@ -128,6 +110,13 @@ class TrajectoryGenerator:
 
     def add_burn(self, time, delta_v):
         self.maneuvers.append((time, delta_v))
+
+    def sat_diff_eq(self, state):
+        r = state[0:3]
+        v = state[3:6]
+        r_norm = np.linalg.norm(r)
+        a_gravity = -MU * r / r_norm**3
+        return np.hstack((v, a_gravity))
 
     def generate_trajectory(self, filename, duration, dt):
         num_steps = int(duration / dt) + 1
@@ -161,15 +150,20 @@ class TrajectoryGenerator:
 
         # Generate Sun unit vectors (same time base)
         sun_data = self.get_sun_positions_unit_vec_eci(duration, dt)
+        earth_rotation_data = self.compute_initial_earth_rotation_angle()
 
         trajectory["start_time"] = self.start_time.isoformat() + "Z"
+        trajectory["earth_rotation_angle"] = earth_rotation_data["earth_rotation_angle"]
         trajectory["t"] = t_arr
         trajectory["position_eci"] = pos_arr
         trajectory["velocity_eci"] = vel_arr
         trajectory["sun_times"] = [s.isoformat() + "Z" for s in sun_data["times"]]
         trajectory["sun_unit_vectors_eci"] = sun_data["unit_vectors"]
+        
 
-        assert(len(trajectory["t"]) == len(trajectory["position_eci"]) == len(trajectory["velocity_eci"]) == len(trajectory["sun_unit_vectors_eci"]))
+        assert(len(trajectory["t"]) == len(trajectory["position_eci"]) == 
+               len(trajectory["velocity_eci"]) == len(trajectory["sun_unit_vectors_eci"]) == 
+               len(trajectory["sun_times"]))
 
         # Write to file
         self.create_json(trajectory, filename)

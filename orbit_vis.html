@@ -1,3 +1,4 @@
+<!-- ui styles -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,6 +11,7 @@ canvas{display:block;}
   position:absolute; top:10px; left:10px; z-index:10;
   background: rgba(0,0,0,0.5); padding:10px; border-radius:6px;
 }
+
 #timeSlider {
   position: absolute;
   top:10px;
@@ -43,10 +45,12 @@ let satMesh = null;
 let orbitLine = null;
 let frame = 0;
 let startTime = null;
-const scale = 0.01;
+const scale = 0.01; // km to visualization units
 const earthRadiusKm = 6371;
 const slider = document.getElementById('timeSlider');
 let deltaTime = 10; // default time step between data points in seconds
+let earthAngle = 0; // initial Earth rotation angle
+let angle = 0;
 
 // -------------------- Scene --------------------
 const scene = new THREE.Scene();
@@ -127,7 +131,8 @@ document.getElementById('orbitFile').addEventListener('change', evt => {
     orbitPoints = data.position_eci.map(p => new THREE.Vector3(p[0]*scale, p[1]*scale, p[2]*scale));
     sunPoints = data.sun_unit_vectors_eci.map(v => new THREE.Vector3(v[0], v[1], v[2]));
     deltaTime = data.t[1] - data.t[0]; // seconds between data points
-    
+    earthAngle = data.earth_rotation_angle; // initial Earth rotation angle
+
     if (orbitLine) scene.remove(orbitLine);
     const orbitGeo = new THREE.BufferGeometry().setFromPoints(orbitPoints);
     orbitLine = new THREE.Line(orbitGeo, new THREE.LineBasicMaterial({color:0xff0000}));
@@ -170,6 +175,18 @@ const SIDEREAL_DAY_S = 86164.0905;
 const omegaSidereal = (2 * Math.PI) / SIDEREAL_DAY_S; // rad/s
 let speedup = 5000;
 let lastPerfTime = performance.now();
+const OMEGA_EARTH = omegaSidereal;
+
+function updateEarthRotation(frame) {
+  const totalAngle = (earthAngle + OMEGA_EARTH * frame * deltaTime) % (2 * Math.PI);
+
+  // Reset orientation to Earth's tilt
+  earthMesh.quaternion.copy(qTilt);
+
+  // Apply absolute rotation around spin axis
+  const qRot = new THREE.Quaternion().setFromAxisAngle(spinAxis, totalAngle);
+  earthMesh.quaternion.premultiply(qRot);
+}
 
 function animate() {
   requestAnimationFrame(animate);
@@ -179,14 +196,10 @@ function animate() {
   if (dt > 0.5) dt = 0.5;
   lastPerfTime = now;
 
-  if (!isPaused) {
-    const angle = omegaSidereal * dt * speedup;
-    earthMesh.rotateOnWorldAxis(spinAxis, angle);
-  }
-
   if (!isPaused && orbitPoints.length > 0) {
     frame = (frame + 1) % orbitPoints.length;
     satMesh.position.copy(orbitPoints[frame]);
+    updateEarthRotation(frame);
     sunLight.position.copy(sunPoints[frame].clone().multiplyScalar(10));
     slider.value = frame;
 
