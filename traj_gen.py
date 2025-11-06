@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 import poliastro
+from scipy.integrate import solve_ivp
 
 
 R_EARTH = 6371.0  # km
@@ -114,8 +115,8 @@ class TrajectoryGenerator:
 
     def sat_perturbations(self, state):
         pass
-    
-    def sat_diff_eq(self, state):
+
+    def sat_diff_eq(self, t, state):
         r = state[0:3]
         v = state[3:6]
         r_norm = np.linalg.norm(r)
@@ -139,18 +140,21 @@ class TrajectoryGenerator:
                     state[3:6] += delta_v
 
             # Integrate motion (simple Euler)
-            r = state[0:3]
-            v = state[3:6]
-            r_norm = np.linalg.norm(r)
-            a_gravity = -MU * r / r_norm**3
-            state[0:3] += v * dt
-            state[3:6] += a_gravity * dt
+            # r = state[0:3]
+            # v = state[3:6]
+            # r_norm = np.linalg.norm(r)
+            # a_gravity = -MU * r / r_norm**3
+            # state[0:3] += v * dt
+            # state[3:6] += a_gravity * dt
+            # ode45 to integrate
+            sol = solve_ivp(self.sat_diff_eq, [t, t+dt], state, method='RK45', rtol=1e-8)
+            state = sol.y[:, -1]
 
             # Store
             t_arr.append(t)
             # print(r)
-            pos_arr.append(convert_vector_eci_to_threejs(r.tolist()))
-            vel_arr.append(convert_vector_eci_to_threejs(v.tolist()))
+            pos_arr.append(convert_vector_eci_to_threejs(state[0:3].tolist()))
+            vel_arr.append(convert_vector_eci_to_threejs(state[3:6].tolist()))
 
         # Generate Sun unit vectors (same time base)
         sun_data = self.get_sun_positions_unit_vec_eci(duration, dt)

@@ -30,7 +30,7 @@ input, button{margin:2px 0; width:220px;}
   <input type="file" id="orbitFile" accept=".json"><br>
   <button id="pauseBtn">Resume</button><br>
   <label>Satellite Size</label>
-  <input type="range" id="satSizeSlider" min="5" max="50" step="0.1" value="1"><br>
+  <input type="range" id="satSizeSlider" min="5" max="50" step="0.1" value="5"><br>
   Sim Time: <span id="simTime">--</span>
 </div>
 
@@ -157,8 +157,15 @@ slider.addEventListener('input', e => {
   const idx = parseInt(e.target.value);
   if (orbitPoints.length && satMesh) {
     satMesh.position.copy(orbitPoints[idx]);
+    updateEarthRotation(idx);
+    sunLight.position.copy(sunPoints[idx].clone().multiplyScalar(10));
   }
   frame = idx;
+  if (startTime && deltaTime) {
+    const dtSeconds = frame * deltaTime;
+    const currentTime = new Date(startTime.getTime() + dtSeconds * 1000);
+    document.getElementById('simTime').textContent = currentTime.toISOString();
+  }
 });
 
 const satSizeSlider = document.getElementById('satSizeSlider');
