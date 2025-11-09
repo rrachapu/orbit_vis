@@ -41,6 +41,7 @@ input, button{margin:2px 0; width:220px;}
 let isPaused = true;
 let orbitPoints = [];
 let sunPoints = [];
+let moonPositions = [];
 let satMesh = null;
 let orbitLine = null;
 let frame = 0;
@@ -77,6 +78,15 @@ controls.dampingFactor = 0.05;
 // set reasonable zoom limits (in the same scaled units)
 controls.minDistance = 1.1 * scale * earthRadiusKm;          // can't zoom inside Earth
 controls.maxDistance = 1e6 * scale * earthRadiusKm;         // large but finite
+
+// -------------------- Moon --------------------
+const moonGeometry = new THREE.SphereGeometry(0.27 * scale * earthRadiusKm, 32, 32);
+const moonMaterial = new THREE.MeshPhongMaterial({
+  map: new THREE.TextureLoader().load('https://threejs.org/examples/textures/planets/moon_1024.jpg')
+});
+const moonMesh = new THREE.Mesh(moonGeometry, moonMaterial);
+moonMesh.position.set(5 * scale * earthRadiusKm, 0, 0);
+scene.add(moonMesh);
 
 // -------------------- Earth --------------------
 const earthGeometry = new THREE.SphereGeometry(1 * scale * earthRadiusKm, 64, 64);
@@ -132,6 +142,7 @@ document.getElementById('orbitFile').addEventListener('change', evt => {
     sunPoints = data.sun_unit_vectors_eci.map(v => new THREE.Vector3(v[0], v[1], v[2]));
     deltaTime = data.t[1] - data.t[0]; // seconds between data points
     earthAngle = data.earth_rotation_angle; // initial Earth rotation angle
+    moonPositions = data.moon_positions_eci.map(p => new THREE.Vector3(p[0]*scale, p[1]*scale, p[2]*scale));
 
     if (orbitLine) scene.remove(orbitLine);
     const orbitGeo = new THREE.BufferGeometry().setFromPoints(orbitPoints);
@@ -208,6 +219,7 @@ function animate() {
     satMesh.position.copy(orbitPoints[frame]);
     updateEarthRotation(frame);
     sunLight.position.copy(sunPoints[frame].clone().multiplyScalar(10));
+    moonMesh.position.copy(moonPositions[frame]);
     slider.value = frame;
 
     const dtSeconds = frame * deltaTime;

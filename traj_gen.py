@@ -55,9 +55,19 @@ class TrajectoryGenerator:
         self.maneuvers = maneuvers if maneuvers else []
         self.eci = eci
 
-    def get_sun_positions_eci(self, duration, dt):
+    def get_moon_position_eci(self, t_now):
         """
-        Compute Sun positions in ECI frame using astropy.
+        Compute Moon position in ECI frame using astropy.
+        Returns position vector [x, y, z] in km.
+        """
+        current_time = Time(t_now, scale="utc")
+        moon_pos = coord.get_body('moon', current_time).transform_to(coord.GCRS(obstime=current_time))
+        r_moon = moon_pos.cartesian.xyz.to(u.km).value
+        return r_moon.tolist()
+
+    def get_moon_positions_eci_3js(self, duration, dt):
+        """
+        Compute Moon positions in ECI frame using astropy.
         Returns dict with 'times' and 'positions'.
         """
         num_steps = int(duration // dt) + 1
@@ -66,14 +76,13 @@ class TrajectoryGenerator:
 
         for t_now in times:
             current_time = Time(t_now, scale="utc")
-            sun_pos = coord.get_sun(current_time).transform_to(coord.GCRS(obstime=current_time))
-            r_sun = sun_pos.cartesian.xyz.to(u.km).value
-            print(r_sun)
-            positions.append(convert_vector_eci_to_threejs(r_sun.tolist()))
+            moon_pos = coord.get_body('moon', current_time).transform_to(coord.GCRS(obstime=current_time))
+            r_moon = moon_pos.cartesian.xyz.to(u.km).value
+            positions.append(convert_vector_eci_to_threejs(r_moon.tolist()))
 
         return {"times": times, "positions": positions}
     
-    def get_sun_positions_unit_vec_eci(self, duration, dt):
+    def get_sun_positions_unit_vec_eci_3js(self, duration, dt):
         """
         Compute Sun unit direction vectors in ECI frame using astropy.
         Returns dict with 'times' and 'unit_vectors'.
@@ -113,8 +122,32 @@ class TrajectoryGenerator:
     def add_burn(self, time, delta_v):
         self.maneuvers.append((time, delta_v))
 
-    def sat_perturbations(self, state):
-        pass
+    def sat_perturbations(self, t, state):
+        perturbation = np.zeros(3)
+        perturbation += self.sat_j2_perturbation(t, state)
+        perturbation += self.sat_drag_perturbation(t, state)
+        perturbation += self.sat_srp_perturbation(t, state)
+        return perturbation
+
+    def sat_j2_perturbation(self, t, state):
+        perturbation = np.zeros(3)
+        perturbation += poliastro.core.perturbations.J2_perturbation(t, state, 3.986e5, 1.08262668e-3, 6378.137)
+        return perturbation
+
+    # using atmospheric_drag_exponential
+    def sat_drag_perturbation(self, t, state):
+        perturbation = np.zeros(3)
+        C_d = 2.2
+        A_m = 0.01  # m^2/kg
+        rho_0 = 3.614e-13  # kg/km^3
+        H = 88.667  # km
+        rho = rho_0 * np.exp(-(np.linalg.norm(state[0:3]) - R_EARTH) / H)
+        perturbation += poliastro.core.perturbations.atmospheric_drag_exponential(t, state, 3.986e5, 6378.137, C_d, A_m, rho, H)
+        return perturbation
+
+    def sat_srp_perturbation(self, t, state):
+        perturbation = np.zeros(3)
+        return perturbation
 
     def sat_diff_eq(self, t, state):
         r = state[0:3]
@@ -157,7 +190,8 @@ class TrajectoryGenerator:
             vel_arr.append(convert_vector_eci_to_threejs(state[3:6].tolist()))
 
         # Generate Sun unit vectors (same time base)
-        sun_data = self.get_sun_positions_unit_vec_eci(duration, dt)
+        sun_data = self.get_sun_positions_unit_vec_eci_3js(duration, dt)
+        moon_data = self.get_moon_positions_eci_3js(duration, dt)
         earth_rotation_data = self.compute_initial_earth_rotation_angle()
 
         trajectory["start_time"] = self.start_time.isoformat() + "Z"
@@ -167,7 +201,7 @@ class TrajectoryGenerator:
         trajectory["velocity_eci"] = vel_arr
         trajectory["sun_times"] = [s.isoformat() + "Z" for s in sun_data["times"]]
         trajectory["sun_unit_vectors_eci"] = sun_data["unit_vectors"]
-        
+        trajectory["moon_positions_eci"] = moon_data["positions"]
 
         assert(len(trajectory["t"]) == len(trajectory["position_eci"]) == 
                len(trajectory["velocity_eci"]) == len(trajectory["sun_unit_vectors_eci"]) == 
