@@ -102,9 +102,11 @@ const earthMaterial = new THREE.MeshPhongMaterial({
 const earthMesh = new THREE.Mesh(earthGeometry, earthMaterial);
 
 // Earth tilt (fixed)
-const obliquity = THREE.MathUtils.degToRad(23.439281);
-const qTilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), obliquity);
-earthMesh.quaternion.copy(qTilt);
+// const obliquity = THREE.MathUtils.degToRad(23.439281);
+// // const obliquity = THREE.MathUtils.degToRad(0);
+// const qTilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), obliquity);
+// earthMesh.quaternion.copy(qTilt);
+earthMesh.rotation.set(0, 0, 0);
 
 // Add axis helper (scaled)
 const earthAxesHelper = new THREE.AxesHelper(2 * scale * earthRadiusKm);
@@ -114,7 +116,7 @@ scene.add(earthMesh);
 // -------------------- Lights --------------------
 scene.add(new THREE.AmbientLight(0xffffff, 0.4));
 const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
-sunLight.position.set(10, 0, 0);
+sunLight.position.set(500, 0, 0);
 scene.add(sunLight);
 
 // Global axes
@@ -170,6 +172,7 @@ slider.addEventListener('input', e => {
     satMesh.position.copy(orbitPoints[idx]);
     updateEarthRotation(idx);
     sunLight.position.copy(sunPoints[idx].clone().multiplyScalar(10));
+    moonMesh.position.copy(moonPositions[idx]);
   }
   frame = idx;
   if (startTime && deltaTime) {
@@ -188,7 +191,7 @@ satSizeSlider.addEventListener('input', e => {
 });
 
 // -------------------- Earth Rotation --------------------
-const spinAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(qTilt).normalize();
+const spinAxis = new THREE.Vector3(0, 1, 0)
 const SIDEREAL_DAY_S = 86164.0905;
 const omegaSidereal = (2 * Math.PI) / SIDEREAL_DAY_S; // rad/s
 let speedup = 5000;
@@ -198,12 +201,15 @@ const OMEGA_EARTH = omegaSidereal;
 function updateEarthRotation(frame) {
   const totalAngle = (earthAngle + OMEGA_EARTH * frame * deltaTime) % (2 * Math.PI);
 
-  // Reset orientation to Earth's tilt
-  earthMesh.quaternion.copy(qTilt);
+  // base tilt (if you ever re-enable it)
+  const baseQuat = new THREE.Quaternion(); // identity (no tilt)
+  // or: baseQuat.setFromAxisAngle(new THREE.Vector3(1,0,0), obliquity);
 
-  // Apply absolute rotation around spin axis
-  const qRot = new THREE.Quaternion().setFromAxisAngle(spinAxis, totalAngle);
-  earthMesh.quaternion.premultiply(qRot);
+  // rotation about spin axis
+  const rotQuat = new THREE.Quaternion().setFromAxisAngle(spinAxis, totalAngle);
+
+  // final orientation = spin * tilt
+  earthMesh.quaternion.copy(rotQuat).multiply(baseQuat);
 }
 
 function animate() {
@@ -219,6 +225,7 @@ function animate() {
     satMesh.position.copy(orbitPoints[frame]);
     updateEarthRotation(frame);
     sunLight.position.copy(sunPoints[frame].clone().multiplyScalar(10));
+    console.log("Sun position:", sunLight.position);
     moonMesh.position.copy(moonPositions[frame]);
     slider.value = frame;
 
