@@ -10,7 +10,6 @@ import numpy as np
 import poliastro
 from scipy.integrate import solve_ivp
 
-
 R_EARTH = 6371.0  # km
 MU = 398600.4418  # km^3/s^2
 ALTITUDE = 1000.0  # km
