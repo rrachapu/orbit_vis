@@ -37,6 +37,31 @@ def convert_quaternion_eci_to_threejs(q):
     R_threejs = R_eci_to_threejs * R_eci
     return R_threejs.as_quat()  # [x, y, z, w]
 
+def eci_to_ecef(r_eci, dt_utc):
+    """
+    Convert ECI (GCRS) coordinates to ECEF (ITRS).
+
+    Parameters:
+        r_eci : array-like, shape (3,) in km
+            ECI position vector [x, y, z].
+        dt_utc : datetime.datetime
+            UTC time corresponding to r_eci.
+
+    Returns:
+        np.ndarray, shape (3,)
+            ECEF position vector [x, y, z] in km
+    """
+    # Astropy time object
+    t_ast = Time(dt_utc, scale="utc")
+    
+    # GCRS coordinate (ECI)
+    gcrs = coord.GCRS(x=r_eci[0]*u.km, y=r_eci[1]*u.km, z=r_eci[2]*u.km, obstime=t_ast)
+    
+    # Transform to ITRS (ECEF)
+    itrs = gcrs.transform_to(coord.ITRS(obstime=t_ast))
+    
+    return np.array([itrs.x.value, itrs.y.value, itrs.z.value])
+
 
 class TrajectoryGenerator:
 
@@ -182,10 +207,14 @@ class TrajectoryGenerator:
             # ode45 to integrate
             sol = solve_ivp(self.sat_diff_eq, [t, t+dt], state, method='RK45', rtol=1e-8)
             state = sol.y[:, -1]
-
-            # Store
-            t_arr.append(t)
+            
             # print(r)
+            if (np.linalg.norm(state[0:3]) < R_EARTH):
+                print("Warning: Satellite has crashed into Earth at time ", t)
+                # should stop simulation and not read more
+                break
+
+            t_arr.append(t)
             pos_arr.append(convert_vector_eci_to_threejs(state[0:3].tolist()))
             vel_arr.append(convert_vector_eci_to_threejs(state[3:6].tolist()))
 
@@ -199,10 +228,17 @@ class TrajectoryGenerator:
         trajectory["t"] = t_arr
         trajectory["position_eci"] = pos_arr
         trajectory["velocity_eci"] = vel_arr
-        trajectory["sun_times"] = [s.isoformat() + "Z" for s in sun_data["times"]]
-        trajectory["sun_unit_vectors_eci"] = sun_data["unit_vectors"]
-        trajectory["moon_positions_eci"] = moon_data["positions"]
+        trajectory["sun_times"] = [s.isoformat() + "Z" for s in sun_data["times"]][0:len(t_arr)]
+        trajectory["sun_unit_vectors_eci"] = sun_data["unit_vectors"][0:len(t_arr)]
+        trajectory["moon_positions_eci"] = moon_data["positions"][0:len(t_arr)]
 
+        print(len(trajectory["t"]))
+        print(len(trajectory["position_eci"]))
+        print(len(trajectory["velocity_eci"]))
+        print(len(trajectory["sun_unit_vectors_eci"]))
+        print(len(trajectory["sun_times"]))
+        print(len(trajectory["moon_positions_eci"]))
+        
         assert(len(trajectory["t"]) == len(trajectory["position_eci"]) == 
                len(trajectory["velocity_eci"]) == len(trajectory["sun_unit_vectors_eci"]) == 
                len(trajectory["sun_times"]))
@@ -213,9 +249,9 @@ class TrajectoryGenerator:
 
 # -------------------- Main --------------------
 if __name__ == "__main__":
-    initial_state = np.array([R_EARTH + 500, 0, 0, 0, 7.6, 0])
+    initial_state = np.array([R_EARTH + 500, 0, 0, 1, 7.6, 2])
     traj_gen = TrajectoryGenerator(initial_state, start_time=[2025,10,1,0,0,0], eci=True)
-    traj_gen.add_burn(600, np.array([0, 1, 0]))
+    traj_gen.add_burn(600, np.array([3, 2, 1]))
     trajectory = traj_gen.generate_trajectory(filename = "trajectory2", duration=30*3600, dt=60)
     
     # sun_positions = traj_gen.get_sun_positions_eci(3600*1440, 60)

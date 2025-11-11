@@ -32,6 +32,12 @@ input, button{margin:2px 0; width:220px;}
   <label>Satellite Size</label>
   <input type="range" id="satSizeSlider" min="5" max="50" step="0.1" value="5"><br>
   Sim Time: <span id="simTime">--</span>
+  <label for="cameraTargetSelect">Camera Target:</label>
+  <select id="cameraTargetSelect">
+    <option value="earth" selected>Earth</option>
+    <option value="moon">Moon</option>
+    <option value="satellite">Satellite</option>
+  </select><br>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
@@ -52,6 +58,7 @@ const slider = document.getElementById('timeSlider');
 let deltaTime = 10; // default time step between data points in seconds
 let earthAngle = 0; // initial Earth rotation angle
 let angle = 0;
+let cameraTargetMode = "earth"; // default
 
 // -------------------- Scene --------------------
 const scene = new THREE.Scene();
@@ -65,6 +72,9 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHei
 // Position the camera a few Earth radii away (scaled)
 camera.position.set(0, 0, 5 * scale * earthRadiusKm);
 camera.lookAt(0,0,0);
+
+const defaultCameraPos = new THREE.Vector3(0, 0, 5 * scale * earthRadiusKm);
+const defaultCameraTarget = new THREE.Vector3(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(window.devicePixelRatio ? window.devicePixelRatio : 1); // crispness on hi-dpi
@@ -115,12 +125,48 @@ scene.add(earthMesh);
 
 // -------------------- Lights --------------------
 scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+const sunLight = new THREE.DirectionalLight(0xffffff, 2);
 sunLight.position.set(500, 0, 0);
 scene.add(sunLight);
 
 // Global axes
-scene.add(new THREE.AxesHelper(2 * scale * earthRadiusKm));
+scene.add(new THREE.AxesHelper(100 * scale * earthRadiusKm));
+
+// -------------------- Grid (scaled to Earth radius) --------------------
+// Create a grid with 20x20 cells, each cell = 1 Earth radius
+const gridSize = 500 * scale * earthRadiusKm;  // total grid size
+const gridDivisions = 500;                       // number of cells
+// Equatorial grid (XZ plane) — default GridHelper lies in XZ, so this is the equator.
+const equatorGrid = new THREE.GridHelper(gridSize, gridDivisions, 0x444444, 0x222222);
+equatorGrid.position.set(0, 0, 0);
+scene.add(equatorGrid);
+
+// Meridian grid (YZ plane) — rotate XZ -> YZ by rotating about Z by +90°
+const meridianGrid = new THREE.GridHelper(gridSize, gridDivisions, 0x336699, 0x223344);
+meridianGrid.rotation.z = Math.PI / 2;
+meridianGrid.position.set(0, 0, 0);
+scene.add(meridianGrid);
+
+// Polar/axial grid (XY plane) — rotate XZ -> XY by rotating about X by +90°
+const axialGrid = new THREE.GridHelper(gridSize, gridDivisions, 0x663366, 0x332233);
+axialGrid.rotation.x = Math.PI / 2;
+axialGrid.position.set(0, 0, 0);
+scene.add(axialGrid);
+
+// -------------------- Sun and Moon Direction Arrows --------------------
+// Arrow pointing to the Sun (yellow)
+const sunArrowOrigin = new THREE.Vector3(0, 0, 0);
+const sunArrowDir = new THREE.Vector3(1, 0, 0);
+const sunArrowLength = 3 * scale * earthRadiusKm;
+const sunArrow = new THREE.ArrowHelper(sunArrowDir, sunArrowOrigin, sunArrowLength, 0xffff00);
+scene.add(sunArrow);
+
+// Arrow pointing to the Moon (white)
+const moonArrowOrigin = new THREE.Vector3(0, 0, 0);
+const moonArrowDir = new THREE.Vector3(1, 0, 0);
+const moonArrowLength = 3 * scale * earthRadiusKm;
+const moonArrow = new THREE.ArrowHelper(moonArrowDir, moonArrowOrigin, moonArrowLength, 0xffffff);
+scene.add(moonArrow);
 
 // -------------------- UI Behavior --------------------
 const pauseBtn = document.getElementById("pauseBtn");
@@ -173,6 +219,13 @@ slider.addEventListener('input', e => {
     updateEarthRotation(idx);
     sunLight.position.copy(sunPoints[idx].clone().multiplyScalar(10));
     moonMesh.position.copy(moonPositions[idx]);
+    
+    // Update arrow directions when scrubbing
+    const sunDir = sunPoints[idx].clone().normalize();
+    sunArrow.setDirection(sunDir);
+    
+    const moonDir = moonPositions[idx].clone().normalize();
+    moonArrow.setDirection(moonDir);
   }
   frame = idx;
   if (startTime && deltaTime) {
@@ -189,6 +242,12 @@ satSizeSlider.addEventListener('input', e => {
     satMesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
   }
 });
+
+document.getElementById('cameraTargetSelect').addEventListener('change', e => {
+  cameraTargetMode = e.target.value;
+});
+
+
 
 // -------------------- Earth Rotation --------------------
 const spinAxis = new THREE.Vector3(0, 1, 0)
@@ -225,14 +284,39 @@ function animate() {
     satMesh.position.copy(orbitPoints[frame]);
     updateEarthRotation(frame);
     sunLight.position.copy(sunPoints[frame].clone().multiplyScalar(10));
-    console.log("Sun position:", sunLight.position);
     moonMesh.position.copy(moonPositions[frame]);
+    
+    // Update arrow directions to point to Sun and Moon
+    const sunDir = sunPoints[frame].clone().normalize();
+    sunArrow.setDirection(sunDir);
+    
+    const moonDir = moonPositions[frame].clone().normalize();
+    moonArrow.setDirection(moonDir);
+    
     slider.value = frame;
 
     const dtSeconds = frame * deltaTime;
     const currentTime = new Date(startTime.getTime() + dtSeconds * 1000);
     document.getElementById('simTime').textContent = currentTime.toISOString();
   }
+
+    // Update camera target position based on selected mode
+  let targetPosition = new THREE.Vector3();
+
+  if (cameraTargetMode === "earth") {
+    earthMesh.getWorldPosition(targetPosition);
+  } else if (cameraTargetMode === "moon") {
+    moonMesh.getWorldPosition(targetPosition);
+  } else if (cameraTargetMode === "satellite" && satMesh) {
+    satMesh.getWorldPosition(targetPosition);
+  }
+
+  // Option 1: camera orbits freely but focuses on the target
+  controls.target.lerp(targetPosition, 0.1); // smooth follow
+
+  // Option 2: camera moves with the object (locked view)
+  // Uncomment if you want the camera to “ride” with it:
+  // camera.position.add(targetPosition.clone().sub(controls.target));
 
   controls.update();
   renderer.render(scene, camera);
