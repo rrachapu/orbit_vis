@@ -27,17 +27,23 @@ input, button{margin:2px 0; width:220px;}
 
 <input type="range" id="timeSlider" min="0" max="1000" step="1">
 <div id="ui">
-  <input type="file" id="orbitFile" accept=".json"><br>
+  <input type="file" id="orbitFile" accept=".json"><br><br>
   <button id="pauseBtn">Resume</button><br>
+  Sim Time: <span id="simTime">--</span><br>
+  Time Step and Visualization Rate: <span id="timeStepDisplay">--</span> seconds<br>
+  Visualization Rate: <span id="visRateDisplay">--</span> s/frame<br>
+  Simulation Speed: <span id="simSpeedDisplay">--</span>× real-time<br>
+  FPS: <span id="fpsDisplay">--</span><br><br>
+  <label for="simulationSpeedSlider">Simulation Speed</label>
+  <input type="range" id="simulationSpeedSlider" min="0.01" max="20" step="0.01" value="1"><br><br>
   <label>Satellite Size</label>
-  <input type="range" id="satSizeSlider" min="5" max="50" step="0.1" value="5"><br>
-  Sim Time: <span id="simTime">--</span>
+  <input type="range" id="satSizeSlider" min="5" max="50" step="0.1" value="5"><br><br>
   <label for="cameraTargetSelect">Camera Target:</label>
   <select id="cameraTargetSelect">
     <option value="earth" selected>Earth</option>
     <option value="moon">Moon</option>
     <option value="satellite">Satellite</option>
-  </select><br>
+  </select>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
@@ -59,6 +65,8 @@ let deltaTime = 10; // default time step between data points in seconds
 let earthAngle = 0; // initial Earth rotation angle
 let angle = 0;
 let cameraTargetMode = "earth"; // default
+let smoothedFps = 60; // start with a reasonable guess
+const FPS_SMOOTH = 0.9; // smoothing factor for stability
 
 // -------------------- Scene --------------------
 const scene = new THREE.Scene();
@@ -232,6 +240,10 @@ slider.addEventListener('input', e => {
     const dtSeconds = frame * deltaTime;
     const currentTime = new Date(startTime.getTime() + dtSeconds * 1000);
     document.getElementById('simTime').textContent = currentTime.toISOString();
+    document.getElementById('timeStepDisplay').textContent = deltaTime.toFixed(2);
+    document.getElementById('visRateDisplay').textContent = (deltaTime * speedup).toFixed(2);
+    document.getElementById('simSpeedDisplay').textContent = simRate.toFixed(0);
+    document.getElementById('fpsDisplay').textContent = smoothedFps.toFixed(1);
   }
 });
 
@@ -247,22 +259,25 @@ document.getElementById('cameraTargetSelect').addEventListener('change', e => {
   cameraTargetMode = e.target.value;
 });
 
+document.getElementById('simulationSpeedSlider').addEventListener('input', e => {
+  speedup = parseFloat(e.target.value);
+});
+
 
 
 // -------------------- Earth Rotation --------------------
 const spinAxis = new THREE.Vector3(0, 1, 0)
 const SIDEREAL_DAY_S = 86164.0905;
 const omegaSidereal = (2 * Math.PI) / SIDEREAL_DAY_S; // rad/s
-let speedup = 5000;
+let speedup = 1;
 let lastPerfTime = performance.now();
 const OMEGA_EARTH = omegaSidereal;
 
 function updateEarthRotation(frame) {
   const totalAngle = (earthAngle + OMEGA_EARTH * frame * deltaTime) % (2 * Math.PI);
 
-  // base tilt (if you ever re-enable it)
-  const baseQuat = new THREE.Quaternion(); // identity (no tilt)
-  // or: baseQuat.setFromAxisAngle(new THREE.Vector3(1,0,0), obliquity);
+  // base tilt quaternion
+  const baseQuat = new THREE.Quaternion();
 
   // rotation about spin axis
   const rotQuat = new THREE.Quaternion().setFromAxisAngle(spinAxis, totalAngle);
@@ -270,6 +285,8 @@ function updateEarthRotation(frame) {
   // final orientation = spin * tilt
   earthMesh.quaternion.copy(rotQuat).multiply(baseQuat);
 }
+
+let fractionalFrame = 0;
 
 function animate() {
   requestAnimationFrame(animate);
@@ -279,8 +296,14 @@ function animate() {
   if (dt > 0.5) dt = 0.5;
   lastPerfTime = now;
 
+  if (dt > 0 && dt < 1) {
+    smoothedFps = FPS_SMOOTH * smoothedFps + (1 - FPS_SMOOTH) * (1 / dt);
+  }
+
   if (!isPaused && orbitPoints.length > 0) {
-    frame = (frame + 1) % orbitPoints.length;
+    fractionalFrame += speedup;
+    frame = Math.floor(fractionalFrame) % orbitPoints.length;
+    // frame = (frame + speedup) % orbitPoints.length;
     satMesh.position.copy(orbitPoints[frame]);
     updateEarthRotation(frame);
     sunLight.position.copy(sunPoints[frame].clone().multiplyScalar(10));
@@ -298,9 +321,14 @@ function animate() {
     const dtSeconds = frame * deltaTime;
     const currentTime = new Date(startTime.getTime() + dtSeconds * 1000);
     document.getElementById('simTime').textContent = currentTime.toISOString();
+    document.getElementById('timeStepDisplay').textContent = deltaTime.toFixed(2);
+    document.getElementById('visRateDisplay').textContent = (deltaTime * speedup).toFixed(2);
+    document.getElementById('fpsDisplay').textContent = smoothedFps.toFixed(1);
   }
 
     // Update camera target position based on selected mode
+  const simRate = deltaTime * speedup * smoothedFps; 
+  document.getElementById('simSpeedDisplay').textContent = simRate.toFixed(0);
   let targetPosition = new THREE.Vector3();
 
   if (cameraTargetMode === "earth") {
@@ -313,10 +341,6 @@ function animate() {
 
   // Option 1: camera orbits freely but focuses on the target
   controls.target.lerp(targetPosition, 0.1); // smooth follow
-
-  // Option 2: camera moves with the object (locked view)
-  // Uncomment if you want the camera to “ride” with it:
-  // camera.position.add(targetPosition.clone().sub(controls.target));
 
   controls.update();
   renderer.render(scene, camera);

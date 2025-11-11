@@ -252,7 +252,7 @@ if __name__ == "__main__":
     initial_state = np.array([R_EARTH + 500, 0, 0, 1, 7.6, 2])
     traj_gen = TrajectoryGenerator(initial_state, start_time=[2025,10,1,0,0,0], eci=True)
     traj_gen.add_burn(600, np.array([3, 2, 1]))
-    trajectory = traj_gen.generate_trajectory(filename = "trajectory2", duration=30*3600, dt=60)
+    trajectory = traj_gen.generate_trajectory(filename = "trajectory2", duration=30*3600, dt=10)
     
     # sun_positions = traj_gen.get_sun_positions_eci(3600*1440, 60)
 
