@@ -184,8 +184,9 @@ class TrajectoryGenerator:
         num_steps = int(duration / dt) + 1
         trajectory = {}
         state = self.initial_state.copy()
-
+        segment = 0
         t_arr, pos_arr, vel_arr = [], [], []
+        segment_arr = []
 
         for i in range(num_steps):
             t = i * dt
@@ -195,6 +196,8 @@ class TrajectoryGenerator:
             for maneuver_time, delta_v in self.maneuvers:
                 if np.isclose(t, maneuver_time):
                     state[3:6] += delta_v
+                    segment += 1
+            
 
             # Integrate motion (simple Euler)
             # r = state[0:3]
@@ -214,6 +217,7 @@ class TrajectoryGenerator:
                 break
 
             t_arr.append(t)
+            segment_arr.append(segment)
             pos_arr.append(convert_vector_eci_to_threejs(state[0:3].tolist()))
             vel_arr.append(convert_vector_eci_to_threejs(state[3:6].tolist()))
 
@@ -230,17 +234,18 @@ class TrajectoryGenerator:
         trajectory["sun_times"] = [s.isoformat() + "Z" for s in sun_data["times"]][0:len(t_arr)]
         trajectory["sun_unit_vectors_eci"] = sun_data["unit_vectors"][0:len(t_arr)]
         trajectory["moon_positions_eci"] = moon_data["positions"][0:len(t_arr)]
+        trajectory["segments"] = segment_arr
 
-        print(len(trajectory["t"]))
-        print(len(trajectory["position_eci"]))
-        print(len(trajectory["velocity_eci"]))
-        print(len(trajectory["sun_unit_vectors_eci"]))
-        print(len(trajectory["sun_times"]))
-        print(len(trajectory["moon_positions_eci"]))
+        # print(len(trajectory["t"]))
+        # print(len(trajectory["position_eci"]))
+        # print(len(trajectory["velocity_eci"]))
+        # print(len(trajectory["sun_unit_vectors_eci"]))
+        # print(len(trajectory["sun_times"]))
+        # print(len(trajectory["moon_positions_eci"]))
         
         assert(len(trajectory["t"]) == len(trajectory["position_eci"]) == 
                len(trajectory["velocity_eci"]) == len(trajectory["sun_unit_vectors_eci"]) == 
-               len(trajectory["sun_times"]))
+               len(trajectory["sun_times"]) == len(trajectory["segments"]))
 
         # Write to file
         self.create_json(trajectory, filename)
