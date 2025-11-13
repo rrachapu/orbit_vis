@@ -119,11 +119,6 @@ const earthMaterial = new THREE.MeshPhongMaterial({
 });
 const earthMesh = new THREE.Mesh(earthGeometry, earthMaterial);
 
-// Earth tilt (fixed)
-// const obliquity = THREE.MathUtils.degToRad(23.439281);
-// // const obliquity = THREE.MathUtils.degToRad(0);
-// const qTilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), obliquity);
-// earthMesh.quaternion.copy(qTilt);
 earthMesh.rotation.set(0, 0, 0);
 
 // Add axis helper (scaled)
