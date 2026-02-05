@@ -12,6 +12,24 @@ canvas{display:block;}
   background: rgba(0,0,0,0.5); padding:10px; border-radius:6px;
 }
 
+.segment-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.segment-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.segment-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
 #timeSlider {
   position: absolute;
   top:10px;
@@ -43,7 +61,10 @@ input, button{margin:2px 0; width:220px;}
     <option value="earth" selected>Earth</option>
     <option value="moon">Moon</option>
     <option value="satellite">Satellite</option>
-  </select>
+  </select><br><br>
+  <label>Segments</label>
+  <div id="segmentSelect" class="segment-list"></div> 
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
@@ -52,6 +73,9 @@ input, button{margin:2px 0; width:220px;}
 <script>
 let isPaused = true;
 let orbitPoints = [];
+let groundPoints = [];
+let segments = {};
+let segmentData = [];
 let sunPoints = [];
 let moonPositions = [];
 let satMesh = null;
@@ -119,7 +143,7 @@ const earthMaterial = new THREE.MeshPhongMaterial({
 });
 const earthMesh = new THREE.Mesh(earthGeometry, earthMaterial);
 
-earthMesh.rotation.set(0, 0, 0);
+earthMesh.rotation.set(0, Math.PI, 0);
 
 // Add axis helper (scaled)
 const earthAxesHelper = new THREE.AxesHelper(2 * scale * earthRadiusKm);
@@ -220,23 +244,68 @@ document.getElementById('orbitFile').addEventListener('change', evt => {
   const file = evt.target.files[0];
   if (!file) return;
   const reader = new FileReader();
+  // let segmentData = [];
   reader.onload = e => {
     const data = JSON.parse(e.target.result);
+    segmentData = data.segments;
+    orbitPoints = [];
+    segmentData.forEach(seg => {
+      seg.position_eci.forEach(p => {
+        orbitPoints.push(new THREE.Vector3(p[0]*scale, p[1]*scale, p[2]*scale));
+      });
+    });
     startTime = new Date(data.start_time);
 
     console.log("Loaded JSON keys:", Object.keys(data)); 
 
     // NOTE: your trajectory JSON is assumed already converted to Three.js order if you used the Python helpers
-    orbitPoints = data.position_eci.map(p => new THREE.Vector3(p[0]*scale, p[1]*scale, p[2]*scale));
+    slider.max = getTotalFrameCount() - 1;
     sunPoints = data.sun_unit_vectors_eci.map(v => new THREE.Vector3(v[0], v[1], v[2]));
     deltaTime = data.t[1] - data.t[0]; // seconds between data points
     earthAngle = data.earth_rotation_angle; // initial Earth rotation angle
     moonPositions = data.moon_positions_eci.map(p => new THREE.Vector3(p[0]*scale, p[1]*scale, p[2]*scale));
+    segments = data.segments || [];
 
-    if (orbitLine) scene.remove(orbitLine);
-    const orbitGeo = new THREE.BufferGeometry().setFromPoints(orbitPoints);
-    orbitLine = new THREE.Line(orbitGeo, new THREE.LineBasicMaterial({color:0xff0000}));
-    scene.add(orbitLine);
+    Object.values(segments).forEach(seg => scene.remove(seg.line));
+    segments = {};
+
+    const segmentContainer = document.getElementById("segmentSelect");
+    segmentContainer.innerHTML = "";
+
+    // Build segments from JSON
+    data.segments.forEach(seg => {
+      const points = seg.position_eci.map(p =>
+        new THREE.Vector3(p[0]*scale, p[1]*scale, p[2]*scale)
+      );
+
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const color = new THREE.Color(
+        seg.color[0]/255,
+        seg.color[1]/255,
+        seg.color[2]/255
+      );
+
+      const material = new THREE.LineBasicMaterial({ color });
+      const line = new THREE.Line(geometry, material);
+      scene.add(line);
+
+      segments[seg.segment_id] = line;
+
+      // ---- UI checkbox ----
+      const row = document.createElement("div");
+      row.className = "segment-item";
+
+      const swatch = document.createElement("div");
+      swatch.className = "segment-color";
+      swatch.style.background = color.getStyle();
+
+      const label = document.createElement("span");
+      label.textContent = `${seg.segment_id}`;
+
+      row.appendChild(swatch);
+      row.appendChild(label);
+      segmentContainer.appendChild(row);
+    });
 
     if (!satMesh) {
       const satGeom = new THREE.SphereGeometry(.1, 16, 16);
@@ -247,7 +316,7 @@ document.getElementById('orbitFile').addEventListener('change', evt => {
     satMesh.position.copy(orbitPoints[0]);
 
     frame = 0;
-    slider.max = orbitPoints.length - 1;
+    // slider.max = orbitPoints.length - 1;
     slider.value = 0;
   };
   reader.readAsText(file);
@@ -255,18 +324,28 @@ document.getElementById('orbitFile').addEventListener('change', evt => {
 
 slider.addEventListener('input', e => {
   const idx = parseInt(e.target.value);
-  if (orbitPoints.length && satMesh) {
+  fractionalFrame = idx;
+  const result = getActiveTrajectoryPoint(idx);
+  if (result) {
     satMesh.position.copy(orbitPoints[idx]);
     updateEarthRotation(idx);
-    sunLight.position.copy(sunPoints[idx].clone().multiplyScalar(10));
-    moonMesh.position.copy(moonPositions[idx]);
-    
-    // Update arrow directions when scrubbing
-    const sunDir = sunPoints[idx].clone().normalize();
-    sunArrow.setDirection(sunDir);
-    
-    const moonDir = moonPositions[idx].clone().normalize();
-    moonArrow.setDirection(moonDir);
+    // Guard sun and moon data (they may be missing or shorter than position array)
+    if (sunPoints && sunPoints[idx]) {
+      sunLight.position.copy(sunPoints[idx].clone().multiplyScalar(10));
+      const sunDir = sunPoints[idx].clone().normalize();
+      sunArrow.setDirection(sunDir);
+    } else {
+      // fallback: point sun arrow to current sunLight position if available
+      console.warn('sunPoints missing at index', idx);
+    }
+
+    if (moonPositions && moonPositions[idx]) {
+      moonMesh.position.copy(moonPositions[idx]);
+      const moonDir = moonPositions[idx].clone().normalize();
+      moonArrow.setDirection(moonDir);
+    } else {
+      console.warn('moonPositions missing at index', idx);
+    }
   }
   frame = idx;
   if (startTime && deltaTime) {
@@ -275,7 +354,7 @@ slider.addEventListener('input', e => {
     document.getElementById('simTime').textContent = currentTime.toISOString();
     document.getElementById('timeStepDisplay').textContent = deltaTime.toFixed(2);
     document.getElementById('visRateDisplay').textContent = (deltaTime * speedup).toFixed(2);
-    document.getElementById('simSpeedDisplay').textContent = simRate.toFixed(0);
+    // document.getElementById('simSpeedDisplay').textContent = simRate.toFixed(0);
     document.getElementById('fpsDisplay').textContent = smoothedFps.toFixed(1);
   }
 });
@@ -319,6 +398,27 @@ function updateEarthRotation(frame) {
   earthMesh.quaternion.copy(rotQuat).multiply(baseQuat);
 }
 
+function getActiveTrajectoryPoint(frame) {
+  let count = 0;
+  for (const seg of segmentData) {
+    const len = seg.position_eci.length;
+    if (frame < count + len) {
+      const p = seg.position_eci[frame - count];
+      return {
+        position: new THREE.Vector3(p[0]*scale, p[1]*scale, p[2]*scale),
+        segmentId: seg.segment_id
+      };
+    }
+    count += len;
+  }
+  return null;
+}
+
+function getTotalFrameCount() {
+  return segmentData.reduce((sum, seg) => sum + seg.position_eci.length, 0);
+}
+
+
 let fractionalFrame = 0;
 
 function animate() {
@@ -334,29 +434,32 @@ function animate() {
   }
 
   if (!isPaused && orbitPoints.length > 0) {
-    fractionalFrame += speedup;
-    frame = Math.floor(fractionalFrame) % orbitPoints.length;
-    // frame = (frame + speedup) % orbitPoints.length;
-    satMesh.position.copy(orbitPoints[frame]);
-    updateEarthRotation(frame);
-    sunLight.position.copy(sunPoints[frame].clone().multiplyScalar(10));
-    moonMesh.position.copy(moonPositions[frame]);
-    
-    // Update arrow directions to point to Sun and Moon
-    const sunDir = sunPoints[frame].clone().normalize();
-    sunArrow.setDirection(sunDir);
-    
-    const moonDir = moonPositions[frame].clone().normalize();
-    moonArrow.setDirection(moonDir);
-    
-    slider.value = frame;
+      satMesh.position.copy(orbitPoints[frame]);
 
-    const dtSeconds = frame * deltaTime;
-    const currentTime = new Date(startTime.getTime() + dtSeconds * 1000);
-    document.getElementById('simTime').textContent = currentTime.toISOString();
-    document.getElementById('timeStepDisplay').textContent = deltaTime.toFixed(2);
-    document.getElementById('visRateDisplay').textContent = (deltaTime * speedup).toFixed(2);
-    document.getElementById('fpsDisplay').textContent = smoothedFps.toFixed(1);
+      fractionalFrame += speedup;
+      const totalFrames = getTotalFrameCount();
+      frame = Math.floor(fractionalFrame) % totalFrames;
+
+      updateEarthRotation(frame);
+
+      if (sunPoints && sunPoints[frame]) {
+          sunLight.position.copy(sunPoints[frame].clone().multiplyScalar(10));
+          sunArrow.setDirection(sunPoints[frame].clone().normalize());
+      }
+
+      if (moonPositions && moonPositions[frame]) {
+          moonMesh.position.copy(moonPositions[frame]);
+          moonArrow.setDirection(moonPositions[frame].clone().normalize());
+      }
+
+      slider.value = frame;
+
+      const dtSeconds = frame * deltaTime;
+      const currentTime = new Date(startTime.getTime() + dtSeconds * 1000);
+      document.getElementById('simTime').textContent = currentTime.toISOString();
+      document.getElementById('timeStepDisplay').textContent = deltaTime.toFixed(2);
+      document.getElementById('visRateDisplay').textContent = (deltaTime * speedup).toFixed(2);
+      document.getElementById('fpsDisplay').textContent = smoothedFps.toFixed(1);
   }
 
     // Update camera target position based on selected mode
@@ -371,7 +474,7 @@ function animate() {
   } else if (cameraTargetMode === "satellite" && satMesh) {
     satMesh.getWorldPosition(targetPosition);
   }
-
+  atmosphereMaterial.uniforms.viewVector.value.subVectors(camera.position, earthMesh.position);
   // Option 1: camera orbits freely but focuses on the target
   controls.target.lerp(targetPosition, 0.1); // smooth follow
 

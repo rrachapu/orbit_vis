@@ -9,10 +9,12 @@ from scipy.spatial.transform import Rotation as R
 import numpy as np
 import poliastro
 from scipy.integrate import solve_ivp
+import matplotlib as mpl
+from matplotlib import cm
 
-R_EARTH = 6371.0  # km
+
+R_EARTH = 6378.137  # km
 MU = 398600.4418  # km^3/s^2
-ALTITUDE = 1000.0  # km
 OMEGA_EARTH = 7.2921159e-5  # rad/s
 
 # rotation from ECI to Three.js
@@ -21,6 +23,13 @@ R_eci_to_threejs = R.from_matrix([
     [0, 0, 1],
     [1, 0, 0]
 ])
+
+def get_orbit_period(state):
+    """Compute orbit period from initial state [r, v]."""
+    r = np.linalg.norm(state[0:3])
+    v = np.linalg.norm(state[3:6])
+    a = 1 / (2 / r - v**2 / MU)
+    return 2 * np.pi * np.sqrt(a**3 / MU)
 
 def convert_vector_eci_to_threejs(v):
     """Convert ECI vector [x, y, z] → Three.js [x, z, -y]."""
@@ -136,6 +145,8 @@ class TrajectoryGenerator:
         jd_ut1 = t_ast.ut1.jd  # UT1 Julian Date
         # IAU 2000 formula for ERA (Earth Rotation Angle)
         era = (2.0 * np.pi * (0.7790572732640 + 1.00273781191135448 * (jd_ut1 - 2451545.0))) % (2.0 * np.pi)
+        era = era + np.pi/2
+
 
         return {"earth_rotation_angle": era}
 
@@ -160,18 +171,39 @@ class TrajectoryGenerator:
 
     # using atmospheric_drag_exponential
     def sat_drag_perturbation(self, t, state):
-        perturbation = np.zeros(3)
         C_d = 2.2
-        A_m = 0.01  # m^2/kg
+        A_m = 0.01      # km^2/kg
         rho_0 = 3.614e-13  # kg/km^3
-        H = 88.667  # km
-        rho = rho_0 * np.exp(-(np.linalg.norm(state[0:3]) - R_EARTH) / H)
-        perturbation += poliastro.core.perturbations.atmospheric_drag_exponential(t, state, 3.986e5, 6378.137, C_d, A_m, rho, H)
-        return perturbation
+        H = 88.667      # km
+
+        return poliastro.core.perturbations.atmospheric_drag_exponential(
+            t, state,
+            k=3.986e5,
+            R=6378.137,
+            C_D=C_d,
+            A_over_m=A_m,
+            H0=H,
+            rho0=rho_0
+        )
+
 
     def sat_srp_perturbation(self, t, state):
         perturbation = np.zeros(3)
         return perturbation
+
+    def include_ground_sites(self, sites : list):
+        # sites = [("name", lat, lon, alt_m), ...]
+        self.ground_sites = {}
+        self.ground_sites["names"] = []
+        self.ground_sites["lats"] = []
+        self.ground_sites["lons"] = []
+        self.ground_sites["alts_m"] = []
+        for site in sites:
+            name, lat, lon, alt_m = site
+            self.ground_sites["names"].append(name)
+            self.ground_sites["lats"].append(lat)
+            self.ground_sites["lons"].append(lon)
+            self.ground_sites["alts_m"].append(alt_m)
 
     def sat_diff_eq(self, t, state):
         r = state[0:3]
@@ -179,23 +211,67 @@ class TrajectoryGenerator:
         r_norm = np.linalg.norm(r)
         a_gravity = -MU * r / r_norm**3
         return np.hstack((v, a_gravity))
+    
+    # segment organization:
+    # start_time : date and time of the trajectory start
+    # earth_rotation_angle : initial rotation at this epoch
+    # t : array of times in seconds from start_time
+    # segments : array of segments
+    # - t : array of times
+    # - position_eci : array of position vectors in ECI frame
+    # - velocity_eci : array of velocity vectors in ECI frame
+    # - 
 
-    def generate_trajectory(self, filename, duration, dt):
+    def lvlh_to_eci_delta_v(self, r, v, dv_lvlh):
+        # Unit vectors
+        r_hat = r / np.linalg.norm(r)
+        h_hat = np.cross(r, v)
+        h_hat /= np.linalg.norm(h_hat)
+        t_hat = np.cross(h_hat, r_hat)
+
+        # LVLH components
+        dv_r, dv_t, dv_n = dv_lvlh
+
+        return dv_r * r_hat + dv_t * t_hat + dv_n * h_hat
+
+    
+
+    def generate_trajectory(self, filename, duration, dt, sites = []):
         num_steps = int(duration / dt) + 1
         trajectory = {}
         state = self.initial_state.copy()
         segment = 0
         t_arr, pos_arr, vel_arr = [], [], []
-        segment_arr = []
+        segment_dict = {}
+        self.include_ground_sites(sites)
+        spring_cmap = mpl.colormaps['spring']
+
+        data = np.linspace(0, 1, len(self.maneuvers)+1)
+
+        colors = spring_cmap(data)
+
+        maneuver_colors = [colors[i][:3] for i in range(len(colors))]
 
         for i in range(num_steps):
             t = i * dt
-            current_time = self.start_time + timedelta(seconds=t)
+            # current_time = self.start_time + timedelta(seconds=t)
 
             # Apply any maneuvers
+            # print(self.maneuvers)
             for maneuver_time, delta_v in self.maneuvers:
-                if np.isclose(t, maneuver_time):
-                    state[3:6] += delta_v
+                if abs(t - maneuver_time) < dt/2:
+                    dv_eci = self.lvlh_to_eci_delta_v(state[0:3], state[3:6], delta_v)
+                    print(dv_eci)
+                    state[3:6] += dv_eci
+                    segment_dict["segment_id"] = segment
+                    segment_dict["color"] = [int(c*255) for c in maneuver_colors[segment]]
+                    segment_dict["t"] = t_arr
+                    segment_dict["position_eci"] = pos_arr
+                    segment_dict["velocity_eci"] = vel_arr
+                    
+                    trajectory.setdefault("segments", []).append(segment_dict)
+                    t_arr, pos_arr, vel_arr = [], [], []
+                    segment_dict = {}
                     segment += 1
             
 
@@ -217,7 +293,7 @@ class TrajectoryGenerator:
                 break
 
             t_arr.append(t)
-            segment_arr.append(segment)
+            # segment_arr.append(segment)
             pos_arr.append(convert_vector_eci_to_threejs(state[0:3].tolist()))
             vel_arr.append(convert_vector_eci_to_threejs(state[3:6].tolist()))
 
@@ -234,7 +310,15 @@ class TrajectoryGenerator:
         trajectory["sun_times"] = [s.isoformat() + "Z" for s in sun_data["times"]][0:len(t_arr)]
         trajectory["sun_unit_vectors_eci"] = sun_data["unit_vectors"][0:len(t_arr)]
         trajectory["moon_positions_eci"] = moon_data["positions"][0:len(t_arr)]
-        trajectory["segments"] = segment_arr
+        trajectory["ground sites"] = self.ground_sites if hasattr(self, 'ground_sites') else {}
+        # finalize last segment
+        segment_dict["segment_id"] = segment
+        segment_dict["t"] = t_arr
+        segment_dict["position_eci"] = pos_arr
+        segment_dict["velocity_eci"] = vel_arr
+        segment_dict["color"] = [int(c*255) for c in maneuver_colors[segment]]
+        
+        trajectory.setdefault("segments", []).append(segment_dict)
 
         # print(len(trajectory["t"]))
         # print(len(trajectory["position_eci"]))
@@ -245,7 +329,7 @@ class TrajectoryGenerator:
         
         assert(len(trajectory["t"]) == len(trajectory["position_eci"]) == 
                len(trajectory["velocity_eci"]) == len(trajectory["sun_unit_vectors_eci"]) == 
-               len(trajectory["sun_times"]) == len(trajectory["segments"]))
+               len(trajectory["sun_times"]))
 
         # Write to file
         self.create_json(trajectory, filename)
@@ -253,12 +337,26 @@ class TrajectoryGenerator:
 
 # -------------------- Main --------------------
 if __name__ == "__main__":
-    initial_state = np.array([R_EARTH + 500, 0, 0, 1, 7.6, 2])
-    traj_gen = TrajectoryGenerator(initial_state, start_time=[2025,10,1,0,0,0], eci=True)
-    traj_gen.add_burn(600, np.array([3, 2, 1]))
-    trajectory = traj_gen.generate_trajectory(filename = "trajectory2", duration=30*3600, dt=10)
-    
-    # sun_positions = traj_gen.get_sun_positions_eci(3600*1440, 60)
+    initial_state = np.array([R_EARTH + 1500, 0, 0, 0, 7.12, 0])
+    orbit_period = get_orbit_period(initial_state)
+    traj_gen = TrajectoryGenerator(
+        initial_state,
+        start_time=[2026,2,4,0,0,0],
+        eci=True
+    )
+    sim_til = orbit_period*.5
+    # ---------------- Maneuvers ----------------
+    traj_gen.add_burn(orbit_period*.5,     np.array([0.0, 0.75, 0.0]))  # raise apogee
+    orbit_period = get_orbit_period(np.array([R_EARTH + 1500, 0, 0, 0, 7.12 + 0.75, 0]))
+    sim_til += orbit_period*.5
+    traj_gen.add_burn(sim_til,   np.array([0.0, 0.65, 0.0]))  # circularize
+    orbit_period = get_orbit_period(np.array([R_EARTH + 1500, 0, 0, 0, 7.12 + 0.75 + 0.65, 0]))
+    sim_til += orbit_period
+    # traj_gen.add_burn(5*3600,   np.array([0.0, 0.0, 0.03]))  # small plane trim
+    # -------------------------------------------
 
-
-    
+    trajectory = traj_gen.generate_trajectory(
+        filename="trajectory2",
+        duration=sim_til,
+        dt=10
+    )
