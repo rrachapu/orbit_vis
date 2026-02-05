@@ -340,6 +340,24 @@ document.getElementById('orbitFile').addEventListener('change', evt => {
   reader.readAsText(file);
 });
 
+async function loadDefaultTrajectory() {
+  try {
+    const response = await fetch('./trajectory2.json');
+    if (!response.ok) return; // file not found → do nothing
+
+    const data = await response.json();
+    ingestTrajectoryData(data);
+    console.log("Loaded default trajectory2.json");
+  } catch (err) {
+    // Silent failure by design
+    console.log("No default trajectory found.");
+  }
+}
+
+// Call on page load
+window.addEventListener('load', loadDefaultTrajectory);
+
+
 
 slider.addEventListener('input', e => {
   const idx = parseInt(e.target.value);
